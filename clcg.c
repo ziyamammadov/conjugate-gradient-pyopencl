@@ -2,7 +2,13 @@
 #include <stdlib.h>
 #include <complex.h>
 #include "clcg.h"
+#include <math.h>
+#include <time.h>
 
+#include <bebop/smc/sparse_matrix.h>
+#include <bebop/smc/sparse_matrix_ops.h>
+
+#include <bebop/smc/csr_matrix.h>
 /* BUFFERS
  * aVals     -- constant    (*float of size `aNZ`)
  * aPointers -- constant    (*int of size `aNZ`)
@@ -99,10 +105,19 @@ cl_program buildProgramAndKernels(cl_context ctx, cl_device_id *dId,
     return program;
 }
 
+float* cg(int size, int nonZeros, const float *aValues, const int *aPointers,
+        const int *aCols, const float *b, float *x, int nRHS, int nIterations, int isComplex) {
+    int i;
+    // printf("Size : %d\n",size);
 
-void cg(int size, int nonZeros, const float *aValues, const int *aPointers,
-        const int *aCols, const float *b, float *x, int nRHS, int isComplex) {
-
+    // for (i=0;i < 4;i++) {
+    //     printf("Avalues: %f%+fi\n", crealf(aValues[i]), cimagf(aValues[i]));
+    //     printf("A pointers: %d\n", aPointers[i]);
+    //     printf("A cols: %d\n", aCols[i]);
+    //     printf("B: %f\n", b[i]);
+    //     printf("X: %f\n", x[i]);
+    //     // printf("Avalues : %d\n",aValues[i]);
+    // }
     // amount of work-groups.
     // system size / work-group size rounded up
     const unsigned int workGroups = 1 + ((size - 1) / LOCAL_SIZE);
@@ -129,7 +144,7 @@ void cg(int size, int nonZeros, const float *aValues, const int *aPointers,
     );
     // for cpu, use CL_DEVICE_TYPE_DEFAULT
     checkClSuccess(
-            clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_GPU, 1, &device_id, &ret_num_devices),
+            clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_DEFAULT, 1, &device_id, &ret_num_devices),
             "clGetDeviceIDs"
     );
     cl_context ctx = clCreateContext(NULL, 1, &device_id, NULL, NULL, &ret);
@@ -234,7 +249,7 @@ void cg(int size, int nonZeros, const float *aValues, const int *aPointers,
                    "clEnqueueNDRangeKernel_spmv_1");
 
 
-    //      r = b - y                   (sub)
+    // r = b - y                   (sub)
     checkClSuccess(clEnqueueNDRangeKernel(cq, kSub, 1, NULL, &globalSize, &localSize, 1, &waitKSpmv, &waitKSub),
                    "clEnqueueNDRangeKernel_sub");
 
@@ -271,7 +286,7 @@ void cg(int size, int nonZeros, const float *aValues, const int *aPointers,
 
     // While not converged
     int iteration = 0;
-    while (iteration < MAX_ITERATIONS) {
+    while (iteration < nIterations) {
         // q = A * d                    (spmv)
         checkClSuccess(clSetKernelArg(kSpmv, 4, sizeof(cl_mem), &dD), "clSetKernelArg_spmv_dD");
         if (iteration == 0)
@@ -406,6 +421,9 @@ void cg(int size, int nonZeros, const float *aValues, const int *aPointers,
 
     checkClSuccess(clReleaseContext(ctx), "release_context");
     checkClSuccess(clReleaseDevice(device_id), "release_device");
-
+   for (i=0;i < 2;i++) {
+        printf("%.1f%+.1fi\n", crealf(x[i]), cimagf(x[i]));
+    }
     free(hDotRes);
+    return x;
 }

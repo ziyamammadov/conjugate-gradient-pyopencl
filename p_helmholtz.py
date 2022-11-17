@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
-'''
+"""
 Add 2 arguments: subdomain_width number_of_subdomains
   subdomain width: -- number of subdomain nodes in each direction (without overlap)
   nmber_or_subdomains: -- total number of subdomains is the square of this number
 Example of usage:
   $ mpirun --oversubscribe -n 5 python3 p_helmholtz.py 8 8
-'''
+"""
+import math
+import sys
+from ctypes import *
+from time import time
+
+import numpy as np
+from numpy.ctypeslib import ndpointer
+import scipy.sparse
+import scipy.sparse as sparse
+import scipy.sparse.linalg
 from mpi4py import MPI
-import scipy.sparse, scipy.sparse.linalg, math
 from numpy import array, random, zeros, ones, arange, dot, vdot, sqrt, real, exp, conjugate, concatenate, empty, ravel, \
     meshgrid
-import sys
-from scipy.sparse.linalg import aslinearoperator  # , LinearOperator
+from scipy.sparse.linalg import aslinearoperator
 
-# import pdb
-from time import time
-from helmFE_var import helmFE_var, CG
+from helmFE_var import CG
 
+libcg = CDLL("./liboclcg.so")
+libcg.connect()
 
 def helm_fe(N, k, eps):
     global DomainProc, SubDomain, nprocs, comm, rank, globtag, maxtag
@@ -1270,9 +1278,9 @@ def rhs(N, k):  # special RHS from Ivan
     b = list(range(nlocsub))
     for p in range(nlocsub):
         b[p] = zeros(GLOBALS[p].shape, dtype=complex)
-    # x = (0:M-1)/(M-1);  % grid points
+    # x = (0:M-1)/(M-1)  % grid points
     x = arange(0.0, 1.00001, 1.0 / (N - 1))
-    # y = (x(2:M) + x(1:M-1))/2;   % mid points
+    # y = (x(2:M) + x(1:M-1))/2   % mid points
     y = (x[1:] + x[:-1]) / 2.0
     # % multipliers i*k*(a.n-1) computed on each side of boundary
     multbot = 1.j * k * (-aa[1] - 1.)
@@ -1303,7 +1311,7 @@ def rhs(N, k):  # special RHS from Ivan
             b[p][0, 0] = (h / 6.) * multleft * (
                     2. * exp(1. * 1.j * k * (dot(points[0, :], aaa))) + exp(1. * 1.j * k * dot(points[1, :], aaa)))
             b[p][0, 0] = b[p][0, 0] + (h / 6.) * multbot * (
-                    2. * exp(1. * 1.j * k * dot(points[2, :], aaa)) + exp(1. * 1.j * k * dot(points[1, :], aaa)));
+                    2. * exp(1. * 1.j * k * dot(points[2, :], aaa)) + exp(1. * 1.j * k * dot(points[1, :], aaa)))
         if SubDomain[p, 4] == N and SubDomain[p, 1] == 0:  # bottom right corner
             points = array([[y[N - 2], 0.], [1., 0.], [1., y[0]]])  # bottom right corner
             b[p][0, -1] = (h / 6.) * multbot * (
@@ -1439,8 +1447,8 @@ def local_rect(N, k, eps, eta, L, Nhoriz, Nvert):
                 pos = pos + 1
                 # following four lines added by Ivan % off diagonal on bottom
             if j < Nhoriz - 1 and j > 0 and m == 0:
-                a[pos] = j  # a[pos]=(m-1)*(Mhoriz)+j; -- in matlab, but m==0
-                b[pos] = j + Nhoriz + 1  # b[pos]=(m-1)*(Mhoriz)+j+Mhoriz+1; -- in matlab, but m==0
+                a[pos] = j  # a[pos]=(m-1)*(Mhoriz)+j -- in matlab, but m==0
+                b[pos] = j + Nhoriz + 1  # b[pos]=(m-1)*(Mhoriz)+j+Mhoriz+1 -- in matlab, but m==0
                 c[pos] = -(k2 + 1j * eps) * h2 / 12.
                 pos = pos + 1
             if j < Nhoriz - 1 and m == Nvert - 1:
@@ -1798,10 +1806,27 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
                         if rank == 0: print('--- Using A_eps for solves')
                     P[p] = A_eps[p][2]
     r = list(range(n_my))
+
     for p in range(n_my):
         if UseCG:
-            # r[p]=CG(P[p],z[p].ravel(),tol=CGtol,maxit=CGMaxIT) # replace with GPGPU solver
-            r[p] = CG(P[0], z[p].ravel(), tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
+            size = P[0].shape[0]
+            a_values=np.array(P[p].data,dtype=np.csingle)
+            # a_values=np.array([1,3,2,8],dtype=np.single)
+            row_ptr=np.array(P[p].indptr,dtype=np.intc)
+            # row_ptr=np.array([0,2,4],dtype=np.intc)
+            col_idx=np.array(P[p].indices,dtype=np.intc)
+            # col_idx=np.array([0,1,0,1],dtype=np.intc)
+            x=np.ascontiguousarray(np.zeros(size),dtype=np.csingle)
+            b=np.array(z[p].ravel(),dtype=np.csingle)
+            # b=np.array([6,-12],dtype=np.single)
+
+            libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'), 
+            ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
+            libcg.cg(size, P[0].nnz, a_values, row_ptr, col_idx, x, b, 1, 5, 1)
+            r[p] = x
+
+            # r[p] = CG(P[0], z[p].ravel(), tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
+            # print(x)
         else:
             r[p] = scipy.sparse.linalg.spsolve(P[p], z[p].ravel())
         r[p] = r[p].reshape(GLOBALS[p].shape)
@@ -1865,7 +1890,6 @@ def check_nd_plot_global_vec(v, txt):  # comm not done yet...
 def check_nd_plot3d_global_vec(v, txt):  # comm not done yet...
     global N, M_coarse, R, RT, A, A_c, n, m, scale_int, Explicit_Acoarse, k, epsilon
     global DomainProc, SubDomain, nprocs, comm, rank
-    import matplotlib.pyplot as plt
     x = arange(0.0, 1.00001, 1.0 / (N - 1))
     y = arange(0.0, 1.00001, 1.0 / (N - 1))
     n_my = SubDomain.shape[0]
@@ -1891,7 +1915,7 @@ def check_nd_plot3d_global_vec(v, txt):  # comm not done yet...
 
 
 def plot3d(f, label):  # for plotting 1D functions
-    import Gnuplot, Gnuplot.funcutils
+    import Gnuplot.funcutils
     g = Gnuplot.Gnuplot(debug=0, persist=1)
     g.clear()
     x = arange(len(f[:, 0]))
@@ -3295,54 +3319,54 @@ def set_globals():
 
 
 ##### Globals: -- the values do not matter...  #################
-OL = 0;
-Coarse_Drh_0 = False;
-it = 0;
-GLOBALS = [];
+OL = 0
+Coarse_Drh_0 = False
+it = 0
+GLOBALS = []
 M_coarse = 1  #
-M_coarse_param = 0;
-M_subd = 1;  #
-P = list(range(M_subd ** 2));
-N = 1;
-n = 1;
-m = 1;
-k = 1;
-W_coarse = 0;
-W_subd = 0  #
-AVERAGER = zeros(1, dtype=float);
+M_coarse_param = 0
 M_subd = 1  #
-Use_Poisson = False;
-scale_int = True;
-epsilon = 0.0;
+P = list(range(M_subd ** 2))
+N = 1
+n = 1
+m = 1
+k = 1
+W_coarse = 0
+W_subd = 0  #
+AVERAGER = zeros(1, dtype=float)
+M_subd = 1  #
+Use_Poisson = False
+scale_int = True
+epsilon = 0.0
 eps_prec1 = 0.0  #
-Explicit_Acoarse = True;
-GLOBALS_0 = [];
-eps_prec2 = 0.0;
+Explicit_Acoarse = True
+GLOBALS_0 = []
+eps_prec2 = 0.0
 b = 1  #
 A = scipy.sparse.coo_matrix(([0.], ([0], [0])), shape=(1, 1))  #
 Dk = scipy.sparse.coo_matrix(([0.], ([0], [0])), shape=(1, 1))  #
-A_c = A.copy();
-A_eps = A.copy();
+A_c = A.copy()
+A_eps = A.copy()
 R = []  #
-RT = [];
-Averaging = 1;
-Restricted_AS = True;
+RT = []
+Averaging = 1
+Restricted_AS = True
 CHOOSER = []  #
-verbose = 10;
-GMRES_VER = 'wgmres';
+verbose = 10
+GMRES_VER = 'wgmres'
 Mhoriz = zeros(1, dtype=int)  #
-Mvert = zeros(1, dtype=int);
+Mvert = zeros(1, dtype=int)
 Mhoriz2 = zeros(1, dtype=int)  #
-Mvert2 = zeros(1, dtype=int);
-UseTriangles = False;
+Mvert2 = zeros(1, dtype=int)
+UseTriangles = False
 tol_3 = 0.01  #
-Marmousi = zeros(1, dtype=float);
+Marmousi = zeros(1, dtype=float)
 Marmousi_c = zeros(1, dtype=float)  #
-Morig = zeros(1, dtype=float);
-OL_vary = True;
+Morig = zeros(1, dtype=float)
+OL_vary = True
 MarMatch = True  #
-Marshift = 0;
-MarMult_in = 1.0;
+Marshift = 0
+MarMult_in = 1.0
 MarMult_out = 1.0  #
 VarCoeff = False  #
 UseMarmousi = False  #
@@ -3350,8 +3374,8 @@ UseMarmousi = False  #
 OshapeD = False  # O-shape Domain                                 #
 InactiveNodes = []  #
 # UseCG=False                                                   #
-UseCG = True;
-CGtol = 1e-4;
+UseCG = True
+CGtol = 1e-4
 CGMaxIT = 1000  #
 ################################################################
 # for 3rd level:
@@ -3360,7 +3384,7 @@ CGMaxIT = 1000  #
 # for parallelisation
 #
 # Matrix assemble is called only on subdomains[MyD[0:len(MyD)]]
-#   (extended with overlap; return will include A for // Ax op as well)
+#   (extended with overlap return will include A for // Ax op as well)
 ################################################################
 # MyD=zeros(1,dtype=int) # subdomain numbers on current process???
 SubDomain = zeros((1, 10), dtype=int)  # Subdomain properties (on my proc)

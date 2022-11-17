@@ -12,11 +12,8 @@ include_directories(
 find_library(BEBOP bebop_util PATHS ./bebop/bebop_util)
 find_library(SMC sparse_matrix_converter PATHS ./bebop/sparse_matrix_converter)
 
-add_executable(oclcg main.c clcg.h clcg.c)
-#add_executable(oclcg main-single-rhs.c clcg-single-rhs.h clcg-single-rhs.c)
+add_library(oclcg SHARED main.c clcg.h clcg.c )
+add_executable(oclcgex main.c clcg.h clcg.c)
 
-target_link_libraries(oclcg
-        OpenCL::OpenCL
-        m
-        "${BEBOP}"
-        "${SMC}")
+target_link_libraries(oclcg OpenCL::OpenCL m "${BEBOP}" "${SMC}")
+target_link_libraries(oclcgex OpenCL::OpenCL m "${BEBOP}" "${SMC}")

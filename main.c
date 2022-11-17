@@ -12,8 +12,8 @@
 
 int main(int argc, char *argv[]) {
 
-    if (argc != 2) {
-        fprintf(stderr, "Usage: ./CG <input matrix file>");
+    if (argc != 5) {
+        fprintf(stderr, "Usage: ./CG <input matrix file> <number of RHS> <is complex> <number of iterations>");
         exit(1);
     }
 
@@ -30,25 +30,9 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     struct csr_matrix_t *a = mtx->repr;
-//    print_csr_matrix_in_matrix_market_format(stdout, a);
-
-    int nRHS = 4;
-//
-//    float *b = (float *) malloc(nRHS * a->n * sizeof(float));
-//    float *x = (float *) malloc(nRHS * a->n * sizeof(float));
-//    // initial values
-//    for (int r = 0; r < nRHS; r++) {
-//        for (int i = 0; i < a->n; i++) {
-//            x[r * a->n + i] = 0.0f;
-//            b[r * a->n + i] = (r + 1) * 1.0f;
-//        }
-//    }
-//
-//    // Can't handle double precision yet
-//    float *aValues = malloc(a->nnz * sizeof(float));
-//    for (int i = 0; i < a->nnz; i++) aValues[i] = (float) ((double*) a->values)[i];
-//
-//    cg(a->n, a->nnz, aValues, a->rowptr, a->colidx, b, x, nRHS, 0);
+    int nRHS = atoi(argv[2]);
+    int isComplex = atoi(argv[3]);
+    int nIterations = atoi(argv[4]);
 
     float complex *b = (float complex *) malloc(nRHS * a->n * sizeof(float complex));
     float complex *x = (float complex *) malloc(nRHS * a->n * sizeof(float complex));
@@ -59,12 +43,10 @@ int main(int argc, char *argv[]) {
             b[r * a->n + i] = ((r + 1) * 1.0f) + 0.0f * I;
         }
     }
-
     // Can't handle double precision yet
     float complex *aValues = malloc(a->nnz * sizeof(float complex));
     for (int i = 0; i < a->nnz; i++) aValues[i] = (float complex) ((double complex*) a->values)[i];
-
-    cg(a->n, a->nnz, (const float *) aValues, a->rowptr, a->colidx, (const float *) b, (float *) x, nRHS, 1);
+    cg(a->n, a->nnz, (const float *) aValues, a->rowptr, a->colidx, (const float *) b, (float *) x, nRHS,nIterations, isComplex);
 
     destroy_csr_matrix(a);
     free(aValues);
