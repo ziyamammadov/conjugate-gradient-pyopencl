@@ -27,26 +27,33 @@ int main(int argc, char *argv[]) {
     if (sparse_matrix_convert(mtx, CSR)) {
         printf("Could not convert matrix to CSR\n");
         destroy_sparse_matrix(mtx);
+        
         exit(1);
     }
     struct csr_matrix_t *a = mtx->repr;
     int nRHS = atoi(argv[2]);
     int isComplex = atoi(argv[3]);
     int nIterations = atoi(argv[4]);
-
-    float complex *b = (float complex *) malloc(nRHS * a->n * sizeof(float complex));
+    
+    float complex *b = (float complex*) malloc(nRHS * a->n * sizeof(float complex));
     float complex *x = (float complex *) malloc(nRHS * a->n * sizeof(float complex));
     // initial values
     for (int r = 0; r < nRHS; r++) {
         for (int i = 0; i < a->n; i++) {
             x[r * a->n + i] = 0.0f + 0.0f * I;
-            b[r * a->n + i] = ((r + 1) * 1.0f) + 0.0f * I;
+            b[r * a->n + i] = ((r + 1) * 5.0f) + 0.0f * I;
         }
     }
+    // b[0] = 3.0f - 4.0f*I;
+    // b[1] = -1.0f + 0.5f*I;
     // Can't handle double precision yet
     float complex *aValues = malloc(a->nnz * sizeof(float complex));
-    for (int i = 0; i < a->nnz; i++) aValues[i] = (float complex) ((double complex*) a->values)[i];
-    cg(a->n, a->nnz, (const float *) aValues, a->rowptr, a->colidx, (const float *) b, (float *) x, nRHS,nIterations, isComplex);
+    for (int i = 0; i < a->nnz; i++) {
+        aValues[i] = (float complex) ((double complex*) a->values)[i];
+    }
+    int *rowptr = a->rowptr;
+    int *colidx = a->colidx;
+    cg(a->n, a->nnz, (const float *) aValues, (const float *) b, a->rowptr, a->colidx, (float *) x, nRHS,nIterations, isComplex);
 
     destroy_csr_matrix(a);
     free(aValues);
