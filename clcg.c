@@ -105,18 +105,15 @@ cl_program buildProgramAndKernels(cl_context ctx, cl_device_id *dId,
     return program;
 }
 
-float* cg(int size, int nonZeros, const float *aValues, const int *aPointers,
-        const int *aCols, const float *b, float *x, int nRHS, int nIterations, int isComplex) {
-    int i;
-    // printf("Size : %d\n",size);
+float* cg(int size, int nonZeros, const float *aValues, const float *bValues, const int *aPointers,
+        const int *aCols, float *x, int nRHS, int nIterations, int isComplex) {
 
-    // for (i=0;i < 4;i++) {
-    //     printf("Avalues: %f%+fi\n", crealf(aValues[i]), cimagf(aValues[i]));
-    //     printf("A pointers: %d\n", aPointers[i]);
-    //     printf("A cols: %d\n", aCols[i]);
-    //     printf("B: %f\n", b[i]);
-    //     printf("X: %f\n", x[i]);
-    //     // printf("Avalues : %d\n",aValues[i]);
+    // printf("Size of nnz: %d\n",nonZeros);
+    // for (int i=0;i < 9;i++) {
+        // printf("A pointers: %d\n", aPointers[i]);
+        // printf("A cols: %d\n", aCols[i]);
+        // printf("Avalues: %f%+fi\n", crealf(aValues[i]), cimagf(aValues[i]));
+        // printf("B: %f%+fi\n", crealf(bValues[i]), cimagf(bValues[i]));
     // }
     // amount of work-groups.
     // system size / work-group size rounded up
@@ -198,7 +195,7 @@ float* cg(int size, int nonZeros, const float *aValues, const int *aPointers,
                    "clEnqueueWriteBuffer_aPointers");
     checkClSuccess(clEnqueueWriteBuffer(cq, dACols, CL_FALSE, 0, nonZeros * sizeof(cl_int), aCols, 0, NULL, NULL),
                    "clEnqueueWriteBuffer_aCols");
-    checkClSuccess(clEnqueueWriteBuffer(cq, dB, CL_FALSE, 0, nRHS * size * valSize, b, 0, NULL, NULL),
+    checkClSuccess(clEnqueueWriteBuffer(cq, dB, CL_FALSE, 0, nRHS * size * valSize, bValues, 0, NULL, NULL),
                    "clEnqueueWriteBuffer_b");
     checkClSuccess(clEnqueueWriteBuffer(cq, dX, CL_FALSE, 0, nRHS * size * valSize, x, 0, NULL, NULL),
                    "clEnqueueWriteBuffer_x");
@@ -263,7 +260,7 @@ float* cg(int size, int nonZeros, const float *aValues, const int *aPointers,
     checkClSuccess(clEnqueueReadBuffer(cq, dDotRes, CL_TRUE, 0, nRHS * workGroups * valSize, hDotRes, 1, &waitKDot, NULL),
                    "clEnqueueReadBuffer_dot_result");
 
-    printf("initial \t\tdelta {");
+    // printf("initial \t\tdelta {");
     for (int r = 0; r < nRHS; r++) {
         // Reduction
         for (int i = 0; i < workGroups; i++) {
@@ -272,17 +269,17 @@ float* cg(int size, int nonZeros, const float *aValues, const int *aPointers,
         }
         if (isComplex) {
             ((float complex *) deltaOld)[r] = ((float complex *) deltaNew)[r];
-            printf(" %s%.4e%s%.4ei ",
-                   creal(((float complex *) deltaNew)[r]) < 0 ? "" : " ",
-                   creal(((float complex *) deltaNew)[r]),
-                   cimag(((float complex *) deltaNew)[r]) < 0 ? "" : "+",
-                   cimag(((float complex *) deltaNew)[r]));
+            // printf(" %s%.4e%s%.4ei ",
+                //    creal(((float complex *) deltaNew)[r]) < 0 ? "" : " ",
+                //    creal(((float complex *) deltaNew)[r]),
+                //    cimag(((float complex *) deltaNew)[r]) < 0 ? "" : "+",
+                //    cimag(((float complex *) deltaNew)[r]));
         } else {
             ((float *) deltaOld)[r] = ((float *) deltaNew)[r];
-            printf(" %.5e ", ((float *) deltaNew)[r]);
+            // printf(" %.5e ", ((float *) deltaNew)[r]);
         }
     }
-    printf("}\n");
+    // printf("}\n");
 
     // While not converged
     int iteration = 0;
@@ -360,18 +357,18 @@ float* cg(int size, int nonZeros, const float *aValues, const int *aPointers,
             else ((float *) hBeta)[r] = ((float *) deltaNew)[r] / ((float *) deltaOld)[r];
         }
 
-        printf("iteration %d \tdelta {", iteration);
-        for (int r = 0; r < nRHS; r++) {
-            if (isComplex)
-                printf(" %s%.4e%s%.4ei ",
-                       creal(((float complex *) deltaNew)[r]) < 0 ? "" : " ",
-                       creal(((float complex *) deltaNew)[r]),
-                       cimag(((float complex *) deltaNew)[r]) < 0 ? "" : "+",
-                       cimag(((float complex *) deltaNew)[r]));
-            else
-                printf(" %.5e ", ((float *) deltaNew)[r]);
-        }
-        printf("}\n");
+        // printf("iteration %d \tdelta {", iteration);
+        // for (int r = 0; r < nRHS; r++) {
+            // if (isComplex)
+                // printf(" %s%.4e%s%.4ei ",
+                    //    creal(((float complex *) deltaNew)[r]) < 0 ? "" : " ",
+                    //    creal(((float complex *) deltaNew)[r]),
+                    //    cimag(((float complex *) deltaNew)[r]) < 0 ? "" : "+",
+                    //    cimag(((float complex *) deltaNew)[r]));
+            // else
+                // printf(" %.5e ", ((float *) deltaNew)[r]);
+        // }
+        // printf("}\n");
 //        printf("   delta = %e\n", deltaNew[2]);
 //        printf("      dq = %e\n", hDq[2]);
 //        printf("   alpha = %e\n", hAlpha[2]);
@@ -421,9 +418,10 @@ float* cg(int size, int nonZeros, const float *aValues, const int *aPointers,
 
     checkClSuccess(clReleaseContext(ctx), "release_context");
     checkClSuccess(clReleaseDevice(device_id), "release_device");
-   for (i=0;i < 2;i++) {
-        printf("%.1f%+.1fi\n", crealf(x[i]), cimagf(x[i]));
-    }
+    // for (int i=0;i < 6;i++) {
+        // printf("%.1f%+.1fi\n", crealf(x[i]), cimagf(x[i]));
+        // printf("%.1f\n", x[i]);
+    // }
     free(hDotRes);
     return x;
 }
