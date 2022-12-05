@@ -15,6 +15,7 @@ import numpy as np
 from numpy.ctypeslib import ndpointer
 import scipy.sparse
 import scipy.sparse as sparse
+import scipy.io as sio
 import scipy.sparse.linalg
 from mpi4py import MPI
 from numpy import array, random, zeros, ones, arange, dot, vdot, sqrt, real, exp, conjugate, concatenate, empty, ravel, \
@@ -1806,27 +1807,32 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
                         if rank == 0: print('--- Using A_eps for solves')
                     P[p] = A_eps[p][2]
     r = list(range(n_my))
-
+    # A = sio.mmread("./test-matrices/test-complex-2.mtx").tocsr()
+    # print(A.todense())
+    # sio.mmwrite("sparse_matrix.mtx",P[0])
+    # print(type(A.indices))
     for p in range(n_my):
         if UseCG:
-            size = P[0].shape[0]
+            # size = P[p].shape[0]
+            size = 2
             a_values=np.array(P[p].data,dtype=np.csingle)
-            # a_values=np.array([1,3,2,8],dtype=np.single)
+            # a_values=np.array(A.data,dtype=np.csingle)
             row_ptr=np.array(P[p].indptr,dtype=np.intc)
-            # row_ptr=np.array([0,2,4],dtype=np.intc)
+            # row_ptr=np.array(A.indptr,dtype=np.intc)
             col_idx=np.array(P[p].indices,dtype=np.intc)
-            # col_idx=np.array([0,1,0,1],dtype=np.intc)
+            # col_idx=np.array(A.indices,dtype=np.intc)
             x=np.ascontiguousarray(np.zeros(size),dtype=np.csingle)
-            b=np.array(z[p].ravel(),dtype=np.csingle)
-            # b=np.array([6,-12],dtype=np.single)
-
-            libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'), 
-            ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
-            libcg.cg(size, P[0].nnz, a_values, row_ptr, col_idx, x, b, 1, 5, 1)
+            # x=np.ascontiguousarray(np.ones(size),dtype=np.csingle)
+            b_values=np.array(z[p].ravel(),dtype=np.csingle)
+            # b_values=np.array([3-4j,-1+0.5j],dtype=np.csingle)
+            libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
+            ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
+            libcg.cg(size, P[p].nnz, a_values, b_values, row_ptr, col_idx, x, 1, CGMaxIT, 1)
             r[p] = x
-
-            # r[p] = CG(P[0], z[p].ravel(), tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
-            # print(x)
+            # x = np.nan_to_num(x)
+            # r[p] = CG(A, b_values, tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
+            print(r[p])
+            # print(r[p])
         else:
             r[p] = scipy.sparse.linalg.spsolve(P[p], z[p].ravel())
         r[p] = r[p].reshape(GLOBALS[p].shape)
@@ -3376,7 +3382,7 @@ InactiveNodes = []  #
 # UseCG=False                                                   #
 UseCG = True
 CGtol = 1e-4
-CGMaxIT = 1000  #
+CGMaxIT = 1  #
 ################################################################
 # for 3rd level:
 ################################################################
