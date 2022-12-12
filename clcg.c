@@ -330,6 +330,23 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
         checkClSuccess(clSetKernelArg(kAxpy, 3, sizeof(cl_int), &negative), "clSetKernelArg_axpySign2");
         checkClSuccess(clEnqueueNDRangeKernel(cq, kAxpy, 1, NULL, &globalSize, &localSize, 0, NULL, &waitKAxpy),
                        "clEnqueueNDRangeKernel_axpy_alphaQR");
+        for (int r = 0; r < nRHS; r++) {
+            // deltaOld = deltaNew
+            if (isComplex) ((float complex *) deltaOld)[r] = ((float complex *) deltaNew)[r];
+            else ((float *) deltaOld)[r] = ((float *) deltaNew)[r];
+
+            if (isComplex) ((float complex *) deltaNew)[r] = 0.0f + 0.0f * I;
+            else ((float *) deltaNew)[r] = 0.0f;
+            // // Reduction
+            // for (int i = 0; i < workGroups; i++) {
+            //     if (isComplex) ((float complex *) deltaNew)[r] += ((float complex *) hDotRes)[r * workGroups + i];
+            //     else ((float *) deltaNew)[r] += ((float *) hDotRes)[r * workGroups + i];
+            // }
+            // beta = deltaNew / deltaOld   in cpu
+            // if (isComplex)
+            //     ((float complex *) hBeta)[r] = ((float complex *) deltaNew)[r] / ((float complex *) deltaOld)[r];
+            // else ((float *) hBeta)[r] = ((float *) deltaNew)[r] / ((float *) deltaOld)[r];
+        }
 
         // deltaNew = r^T * r           (dot) reduce in cpu
         checkClSuccess(clSetKernelArg(kDot, 0, sizeof(cl_mem), &dR), "clSetKernelArg_dot_dD_1");
@@ -340,12 +357,12 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
                        "clEnqueueReadBuffer_dot_Rresult");
 
         for (int r = 0; r < nRHS; r++) {
-            // deltaOld = deltaNew
-            if (isComplex) ((float complex *) deltaOld)[r] = ((float complex *) deltaNew)[r];
-            else ((float *) deltaOld)[r] = ((float *) deltaNew)[r];
+            // // deltaOld = deltaNew
+            // if (isComplex) ((float complex *) deltaOld)[r] = ((float complex *) deltaNew)[r];
+            // else ((float *) deltaOld)[r] = ((float *) deltaNew)[r];
 
-            if (isComplex) ((float complex *) deltaNew)[r] = 0.0f + 0.0f * I;
-            else ((float *) deltaNew)[r] = 0.0f;
+            // if (isComplex) ((float complex *) deltaNew)[r] = 0.0f + 0.0f * I;
+            // else ((float *) deltaNew)[r] = 0.0f;
             // Reduction
             for (int i = 0; i < workGroups; i++) {
                 if (isComplex) ((float complex *) deltaNew)[r] += ((float complex *) hDotRes)[r * workGroups + i];
@@ -419,7 +436,7 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
     checkClSuccess(clReleaseContext(ctx), "release_context");
     checkClSuccess(clReleaseDevice(device_id), "release_device");
     // for (int i=0;i < 6;i++) {
-        // printf("%.1f%+.1fi\n", crealf(x[i]), cimagf(x[i]));
+    //     printf("%.1f%+.1fi\n", crealf(x[i]), cimagf(x[i]));
         // printf("%.1f\n", x[i]);
     // }
     free(hDotRes);
