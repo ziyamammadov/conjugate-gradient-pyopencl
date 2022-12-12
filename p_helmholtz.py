@@ -22,7 +22,7 @@ from numpy import array, random, zeros, ones, arange, dot, vdot, sqrt, real, exp
     meshgrid
 from scipy.sparse.linalg import aslinearoperator
 
-from helmFE_var import CG
+from helmFE_var import CG, CG2
 
 libcg = CDLL("./liboclcg.so")
 libcg.connect()
@@ -1813,13 +1813,13 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
     # print(type(A.indices))
     for p in range(n_my):
         if UseCG:
-            # size = P[p].shape[0]
-            size = 2
-            a_values=np.array(P[p].data,dtype=np.csingle)
+            size = P[0].shape[0]
+            # size = 2
+            a_values=np.array(P[0].data,dtype=np.csingle)
             # a_values=np.array(A.data,dtype=np.csingle)
-            row_ptr=np.array(P[p].indptr,dtype=np.intc)
+            row_ptr=np.array(P[0].indptr,dtype=np.intc)
             # row_ptr=np.array(A.indptr,dtype=np.intc)
-            col_idx=np.array(P[p].indices,dtype=np.intc)
+            col_idx=np.array(P[0].indices,dtype=np.intc)
             # col_idx=np.array(A.indices,dtype=np.intc)
             x=np.ascontiguousarray(np.zeros(size),dtype=np.csingle)
             # x=np.ascontiguousarray(np.ones(size),dtype=np.csingle)
@@ -1827,12 +1827,19 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
             # b_values=np.array([3-4j,-1+0.5j],dtype=np.csingle)
             libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
             ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
-            libcg.cg(size, P[p].nnz, a_values, b_values, row_ptr, col_idx, x, 1, CGMaxIT, 1)
+
+            libcg.cg(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, 1, CGMaxIT, 1)
             r[p] = x
             # x = np.nan_to_num(x)
-            # r[p] = CG(A, b_values, tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
-            print(r[p])
-            # print(r[p])
+            # r[p] = CG(P[0], b_values, tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
+            # asd = CG2(A, b_values, tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
+            # if rank == 1:
+                # print(f'CG: {r[p]}')
+                # print(f'CG2: {asd}')
+                # print(f'X = {x}')
+                # print(r[p])
+            print(f'X = {x}')
+            
         else:
             r[p] = scipy.sparse.linalg.spsolve(P[p], z[p].ravel())
         r[p] = r[p].reshape(GLOBALS[p].shape)
@@ -3382,7 +3389,7 @@ InactiveNodes = []  #
 # UseCG=False                                                   #
 UseCG = True
 CGtol = 1e-4
-CGMaxIT = 1  #
+CGMaxIT = 100  #
 ################################################################
 # for 3rd level:
 ################################################################
