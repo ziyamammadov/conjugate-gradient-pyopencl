@@ -514,27 +514,69 @@ def CG(A,b,x=None,tol=1e-5,maxit=1000,verbose=False):
     if x is None:
         x=zeros(b.size,dtype=complex)
     ax=A.dot(x)
-    r = b-A.dot(x)
+    r = b-ax
     for i in range(maxit):
         #z = Preconditioner_I(r) 
-        z = r 
-        rho = dot(r, z)
+        deltaNew = dot(r, r)
         #pdb.set_trace()
         if i==0:
-            p = z
+            d = r
         else:
-            beta = rho/rho_2
-            p = z + beta * p
-        q = A.dot(p)
-        alpha = rho / dot(p, q)
-        x = x + alpha * p
+            beta = deltaNew/deltaOld
+            d = r + beta * d
+        q = A.dot(d)
+        alpha = deltaNew / dot(d, q)
+        x = x + alpha * d
         r = r - alpha * q
-        res2norm = sqrt(abs(dot(r, r)))
-        if verbose:
-            print(i,res2norm) # ,dot(r,r),abs(dot(r,r))
-        if res2norm < tol:
-            break
-        rho_2 = rho
+        # res2norm = sqrt(abs(dot(r, r)))
+        # if verbose:
+        #     print(i,res2norm) # ,dot(r,r),abs(dot(r,r))
+        # if res2norm < tol:
+        #     break
+        deltaOld = deltaNew
+        # if i==1:
+            # print(f'CG2 deltaNew = {deltaNew}')
+            # print(f'CG2 deltaOld = {deltaOld}')
+            # print(f'CG2 q = {q}')
+            # print(f'CG2 alpha = {alpha}')
+            # print(f'CG2 beta = {beta}')
+            # print(f'CG2 x = {x}')
+            # print(f'CG2 r = {r}')
+
+    return x
+
+def CG2(A,b,x=None,tol=1e-5,maxit=1000,verbose=False):
+    if x is None:
+        x=zeros(b.size,dtype=complex)
+    ax=A.dot(x)
+    r = b-ax
+    d = r
+    deltaNew = dot(r,r)
+
+    for i in range(maxit):
+        # print(f'CG2 d = {d}')
+        q = A.dot(d)
+        alpha = deltaNew/dot(d,q)
+        x = x + alpha * d
+        r = r - alpha * q
+        deltaOld = deltaNew
+        deltaNew = dot(r,r)
+
+        beta = deltaNew/deltaOld
+        d = r + beta * d
+        # if i==1:
+            # print(f'CG2 deltaNew = {deltaNew}')
+            # print(f'CG2 deltaOld = {deltaOld}')
+            # print(f'CG2 q = {q}')
+            # print(f'CG2 alpha = {alpha}')
+            # print(f'CG2 beta = {beta}')
+            # print(f'CG2 x = {x}')
+            # print(f'CG2 r = {r}')
+        # res2norm = sqrt(abs(dot(r, r)))
+        # if verbose:
+        #     print(i,res2norm) # ,dot(r,r),abs(dot(r,r))
+        # if res2norm < tol:
+        #     break
     return x
 
 def PCG(A,b,M=None,x=None,tol=1e-6,maxit=1000,verbose=False):
@@ -673,3 +715,4 @@ if __name__ == "__main__":
     matplotlib_plot3d(abs(x),'abs(solution)')
     #matplotlib_plot3d(x.real,'solution.real')
     #matplotlib_plot3d(x.imag,'solution.imag')
+
