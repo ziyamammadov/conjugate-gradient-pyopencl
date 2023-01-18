@@ -35,9 +35,12 @@
  */
 
 #define LOCAL_SIZE 256
+//#define LOCAL_SIZE 128
+///#define LOCAL_SIZE 216
 
 // used for spmv, multiple of LOCAL_SIZE
 #define WAVE_SIZE 32
+////#define WAVE_SIZE 36
 
 #define MAX_ITERATIONS 10
 #define MAX_SOURCE_SIZE (0x1000)
@@ -117,6 +120,7 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
     // }
     // amount of work-groups.
     // system size / work-group size rounded up
+    if (size<LOCAL_SIZE) printf("********** WARNING '''''''''  size less than %d NOT SUPPORTED!!! ********* (size=%d)\n\n",LOCAL_SIZE,size);
     const unsigned int workGroups = 1 + ((size - 1) / LOCAL_SIZE);
     const size_t globalSize = workGroups == 1 // FIXME dot doesn't like localsize which is not a power of 2
                                 ? size
@@ -152,6 +156,8 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
         valSize = sizeof(cl_float2);
     else
         valSize = sizeof(cl_float);
+    //printf("valsize=%ld\n",valSize);
+    //printf("nRHS=%d\n",nRHS);
 
     // Create Device memory buffers
     cl_mem dAValues = clCreateBuffer(ctx, CL_MEM_READ_ONLY, nonZeros * valSize, NULL, &ret);
@@ -184,9 +190,13 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
     void *hAlpha = malloc(nRHS * valSize);
     void *hBeta = malloc(nRHS * valSize);
     void *deltaNew = calloc(nRHS, valSize);
+    //void *deltaNew = malloc(nRHS * valSize);
     void *deltaOld = malloc(nRHS * valSize);
     int negative = 0;
     int positive = 1;
+    /// for debugging:
+    ////void *alphas = malloc(nRHS * valSize * nIterations );
+    ///
 
     // Copy over the constant and initial values
     checkClSuccess(clEnqueueWriteBuffer(cq, dAValues, CL_FALSE, 0, nonZeros * valSize, aValues, 0, NULL, NULL),
@@ -267,6 +277,7 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
             if (isComplex) ((float complex *) deltaNew)[r] += ((float complex *) hDotRes)[r * workGroups + i];
             else ((float *) deltaNew)[r] += ((float *) hDotRes)[r * workGroups + i];
         }
+        //if (isComplex) printf("deltaNew= %6f %+.6fi\n",crealf(((float complex *) deltaNew)[r]),cimagf(((float complex *) deltaNew)[r]));
         if (isComplex) {
             ((float complex *) deltaOld)[r] = ((float complex *) deltaNew)[r];
             // printf(" %s%.4e%s%.4ei ",
@@ -292,11 +303,12 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
         else
             checkClSuccess(clEnqueueNDRangeKernel(cq, kSpmv, 1, NULL, &spmvGlobalSize, &spmvLocalSize, 1, &waitKAypx, &waitKSpmv),
                            "clEnqueueNDRangeKernel_spmv_q=Ad");
-
+    ///// Load to CPU the result of Ax op: q
         // alpha = deltaNew / (d * q)
         //      dq = d * q              (dot) reduce in cpu
         checkClSuccess(clSetKernelArg(kDot, 0, sizeof(cl_mem), &dD), "clSetKernelArg_dot_dD_1");
         checkClSuccess(clSetKernelArg(kDot, 1, sizeof(cl_mem), &dQ), "clSetKernelArg_dot_dQ_2");
+    ///(void)sleep(0.0);
         checkClSuccess(clEnqueueNDRangeKernel(cq, kDot, 1, NULL, &globalSize, &localSize, 1, &waitKSpmv, &waitKDot),
                        "clEnqueueNDRangeKernel_dot_DQ");
         checkClSuccess(clEnqueueReadBuffer(cq, dDotRes, CL_TRUE, 0, nRHS * workGroups * valSize, hDotRes, 1, &waitKDot, NULL),
@@ -313,6 +325,11 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
             //      alpha = deltaNew / dq   in cpu
             if (isComplex) ((float complex *) hAlpha)[r] = ((float complex *) deltaNew)[r] / ((float complex *) hDq)[r];
             else ((float *) hAlpha)[r] = ((float *) deltaNew)[r] / ((float *) hDq)[r];
+            ////
+            ////if (isComplex) printf("deltaNew= %6f %+.6fi\n",crealf(((float complex *) deltaNew)[r]),cimagf(((float complex *) deltaNew)[r]));
+            //if (isComplex) printf("%d hAlpha= %6f %+.6fi\n",iteration, crealf(((float complex *) hAlpha)[r]),cimagf(((float complex *) hAlpha)[r]));
+            ////
+            ////if (isComplex) ((float complex *)alphas)[iteration*nRHS+r]=((float complex *) hAlpha)[r];
         }
         checkClSuccess(clEnqueueWriteBuffer(cq, dAxpyConst, CL_TRUE, 0, nRHS * valSize, hAlpha, 0, NULL, NULL),
                        "clEnqueueWriteBuffer_axpyConst");
@@ -400,7 +417,12 @@ float* cg(int size, int nonZeros, const float *aValues, const float *bValues, co
 
         iteration++;
     }
-
+    ////for (int r = 0; r < nRHS; r++) {
+    ////    for (iteration=0; iteration < nIterations; iteration++) {
+    ////        if (isComplex) printf("%d: %d hAlpha= %6f %+.6fi\n",r,iteration,
+    ////        crealf(((float complex *) alphas)[iteration*nRHS+r]),cimagf(((float complex *) alphas)[iteration*nRHS+r]));
+    ////    }
+    ////}
     checkClSuccess(clEnqueueReadBuffer(cq, dX, CL_TRUE, 0, nRHS * size * valSize, x, 0, NULL, NULL),
                    "clEnqueueReadBuffer_x_result");
 
