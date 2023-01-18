@@ -514,10 +514,13 @@ def CG(A,b,x=None,tol=1e-5,maxit=1000,verbose=False):
     if x is None:
         x=zeros(b.size,dtype=complex)
     ax=A.dot(x)
+
     r = b-ax
     for i in range(maxit):
         #z = Preconditioner_I(r) 
         deltaNew = dot(r, r)
+        ##OK##print('deltaNew=',deltaNew)
+        #print('deltaNew=',deltaNew)
         #pdb.set_trace()
         if i==0:
             d = r
@@ -525,7 +528,9 @@ def CG(A,b,x=None,tol=1e-5,maxit=1000,verbose=False):
             beta = deltaNew/deltaOld
             d = r + beta * d
         q = A.dot(d)
+        ###print('q=',q)
         alpha = deltaNew / dot(d, q)
+        ###print(i,' alpha=',alpha)
         x = x + alpha * d
         r = r - alpha * q
         # res2norm = sqrt(abs(dot(r, r)))
@@ -715,4 +720,3 @@ if __name__ == "__main__":
     matplotlib_plot3d(abs(x),'abs(solution)')
     #matplotlib_plot3d(x.real,'solution.real')
     #matplotlib_plot3d(x.imag,'solution.imag')
-
