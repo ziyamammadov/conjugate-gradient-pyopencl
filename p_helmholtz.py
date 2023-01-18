@@ -1807,42 +1807,56 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
                         if rank == 0: print('--- Using A_eps for solves')
                     P[p] = A_eps[p][2]
     r = list(range(n_my))
-    # A = sio.mmread("./test-matrices/test-complex-2.mtx").tocsr()
-    # print(A.todense())
-    # sio.mmwrite("sparse_matrix.mtx",P[0])
-    # print(type(A.indices))
-    for p in range(n_my):
-        if UseCG:
-            size = P[0].shape[0]
-            # size = 2
-            a_values=np.array(P[0].data,dtype=np.csingle)
-            # a_values=np.array(A.data,dtype=np.csingle)
-            row_ptr=np.array(P[0].indptr,dtype=np.intc)
-            # row_ptr=np.array(A.indptr,dtype=np.intc)
-            col_idx=np.array(P[0].indices,dtype=np.intc)
-            # col_idx=np.array(A.indices,dtype=np.intc)
-            x=np.ascontiguousarray(np.zeros(size),dtype=np.csingle)
-            # x=np.ascontiguousarray(np.ones(size),dtype=np.csingle)
-            b_values=np.array(z[p].ravel(),dtype=np.csingle)
-            # b_values=np.array([3-4j,-1+0.5j],dtype=np.csingle)
-            libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
-            ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
-
-            libcg.cg(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, 1, CGMaxIT, 1)
-            r[p] = x
-            # x = np.nan_to_num(x)
-            # r[p] = CG(P[0], b_values, tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
-            # asd = CG2(A, b_values, tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
-            # if rank == 1:
-                # print(f'CG: {r[p]}')
-                # print(f'CG2: {asd}')
-                # print(f'X = {x}')
-                # print(r[p])
-            print(f'X = {x}')
-            
-        else:
-            r[p] = scipy.sparse.linalg.spsolve(P[p], z[p].ravel())
-        r[p] = r[p].reshape(GLOBALS[p].shape)
+    if UseCG==3:
+        for p in range(n_my):
+            r[p] = CG(P[0], z[p].ravel(), tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
+            r[p] = r[p].reshape(GLOBALS[p].shape)
+    elif UseCG==2:
+        ###n_my=2 #### HACK! TODO remove
+        size = P[0].shape[0]
+        x=np.ascontiguousarray(np.zeros(size*n_my),dtype=np.csingle)
+        b_vals=zeros(size*n_my,dtype=z[0].dtype)
+        for p in range(n_my):
+            b_vals[p*size:(p+1)*size]=z[p][:].ravel()
+            #print(p,' -- z=',z[p][:].ravel())
+        #print('bvals=',b_vals)
+        b_values=np.array(b_vals,dtype=np.csingle)
+        a_values=np.array(P[0].data,dtype=np.csingle)
+        row_ptr=np.array(P[0].indptr,dtype=np.intc)
+        col_idx=np.array(P[0].indices,dtype=np.intc)
+        x=np.ascontiguousarray(np.zeros(size*n_my),dtype=np.csingle)
+        libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
+        ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
+        #print('==== size=',size)
+        libcg.cg(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, n_my, CGMaxIT, 1)
+        for p in range(n_my):
+            r[p]=x[p*size:(p+1)*size].astype(complex)
+            r[p] = r[p].reshape(GLOBALS[p].shape)
+            #print('r-shape', p , r[p].shape)
+        #exit(0)
+    else: 
+        for p in range(n_my):
+            if UseCG==1:
+                size = P[0].shape[0]
+                # size = 2
+                a_values=np.array(P[0].data,dtype=np.csingle)
+                # a_values=np.array(A.data,dtype=np.csingle)
+                row_ptr=np.array(P[0].indptr,dtype=np.intc)
+                # row_ptr=np.array(A.indptr,dtype=np.intc)
+                col_idx=np.array(P[0].indices,dtype=np.intc)
+                # col_idx=np.array(A.indices,dtype=np.intc)
+                x=np.ascontiguousarray(np.zeros(size),dtype=np.csingle)
+                # x=np.ascontiguousarray(np.ones(size),dtype=np.csingle)
+                b_values=np.array(z[p].ravel(),dtype=np.csingle)
+                # b_values=np.array([3-4j,-1+0.5j],dtype=np.csingle)
+                libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
+                ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
+ 
+                libcg.cg(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, 1, CGMaxIT, 1)
+                r[p] = x.astype(complex)
+            else:
+                r[p] = scipy.sparse.linalg.spsolve(P[p], z[p].ravel())
+            r[p] = r[p].reshape(GLOBALS[p].shape)
     r = OL_update(r)
     return r
 
@@ -3252,8 +3266,8 @@ def HSolver(k_in, W_subd_in, M_subd_in, ep1_in, OL_in, AS_prec):
 
     if rank == 0: print('  UseTriangles=', UseTriangles)
 
-    ###guess=0
-    guess = 2
+    guess=1
+    ###guess = 2
     n_mysubd = SubDomain.shape[0]
     if guess == 1:  # Using initial guess of ones
         x0 = []
@@ -3386,10 +3400,20 @@ UseMarmousi = False  #
 # OshapeD=True # O-shape Domain                                 #
 OshapeD = False  # O-shape Domain                                 #
 InactiveNodes = []  #
-# UseCG=False                                                   #
-UseCG = True
-CGtol = 1e-4
-CGMaxIT = 100  #
+CGtol = 1e-5
+CGMaxIT = 100
+UseCG = 1
+if UseCG==0:
+    print('=== Using EXACT SubSolves!')
+elif UseCG==1:
+    print('=== Using',CGMaxIT,'iterations of GPGPU CG with Single RHS SubSolves!')
+elif UseCG==2:
+    print('=== Using',CGMaxIT,'iterations of GPGPU CG with Multiple RHS SubSolves!')
+elif UseCG==3:
+    print('=== Using',CGMaxIT,'iterations of NumPy-CG SubSolves!')
+else:
+    print('=== -- unknown SubSolver!')
+    exit(0)
 ################################################################
 # for 3rd level:
 ################################################################
@@ -3420,14 +3444,14 @@ verbose = 10
 
 kk = 10  # set it here!
 
-if len(sys.argv) != 3:
+if len(sys.argv) != 4:
     if rank == 0:
         print("====> please supply 2 arguments: subdomain_width number_of_subdomains")
     exit(0)
 else:
     M_s = int(sys.argv[1])
     W_s = int(sys.argv[2])
-
+    UseCG = int(sys.argv[3])
 AS_prec = 1
 
 if AS_prec == 1 or AS_prec == 5:
@@ -3441,6 +3465,8 @@ alpha = 0.5
 beta = 1.0
 NN = (W_s - 1) * M_s + 1
 ol = int((W_s - 2) / 2)
+# ol = 2
+
 # ol=-ol # subdomains with different sizes on the edges (previous code)
 if rank == 0:
     print('N=', NN, 'k=', kkk, 'alpha=', alpha, 'M_s=', M_s, 'W_s=', W_s, 'OL=', ol)
@@ -3451,3 +3477,6 @@ ep2 = epsilon
 if rank == 0: print('----> setting epsilon=k^beta: ', epsilon)
 t1 = time()
 its = HSolver(k_in=kkk, W_subd_in=W_s, M_subd_in=M_s, ep1_in=ep1, OL_in=ol, AS_prec=AS_prec)
+t2=time()
+print('Total time:',t2-t1, '(',(t2-t1)/60,'minutes )')
+print('Time per iter:',time_per_it/(its-1))
