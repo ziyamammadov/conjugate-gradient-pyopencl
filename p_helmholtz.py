@@ -22,7 +22,8 @@ from numpy import array, random, zeros, ones, arange, dot, vdot, sqrt, real, exp
     meshgrid
 from scipy.sparse.linalg import aslinearoperator
 
-from helmFE_var import CG, CG2
+from helmFE_var import CG
+from cl import CG as P_CG
 
 libcg = CDLL("./liboclcg.so")
 libcg.connect()
@@ -1807,59 +1808,73 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
                         if rank == 0: print('--- Using A_eps for solves')
                     P[p] = A_eps[p][2]
     r = list(range(n_my))
-    if UseCG==3:
+    # A = sio.mmread("./test-matrices/test-complex-2.mtx").tocsr()
+    if UseCG == 3:
         for p in range(n_my):
-            r[p] = CG(P[0], z[p].ravel(), tol=CGtol, maxit=CGMaxIT)  # replace with GPGPU solver
+            # b_values = np.array([3-4j, -1+0.5j], dtype=np.csingle)
+            r[p] = CG(P[0], z[p].ravel(), tol=CGtol, maxit=100)  # replace with GPGPU solver
+            # r[p] = CG(A, b_values, tol=CGtol, maxit=CGMaxIT)
+            # print(r[p])
+            # print(r[p])
             r[p] = r[p].reshape(GLOBALS[p].shape)
-    elif UseCG==2:
-        ###n_my=2 #### HACK! TODO remove
+    elif UseCG == 2:
+        # n_my=2 #### HACK! TODO remove
         size = P[0].shape[0]
-        x=np.ascontiguousarray(np.zeros(size*n_my),dtype=np.csingle)
-        b_vals=zeros(size*n_my,dtype=z[0].dtype)
+        x = np.ascontiguousarray(np.zeros(size*n_my), dtype=np.csingle)
+        b_vals = zeros(size*n_my, dtype=z[0].dtype)
         for p in range(n_my):
-            b_vals[p*size:(p+1)*size]=z[p][:].ravel()
-            #print(p,' -- z=',z[p][:].ravel())
-        #print('bvals=',b_vals)
-        b_values=np.array(b_vals,dtype=np.csingle)
-        a_values=np.array(P[0].data,dtype=np.csingle)
-        row_ptr=np.array(P[0].indptr,dtype=np.intc)
-        col_idx=np.array(P[0].indices,dtype=np.intc)
-        x=np.ascontiguousarray(np.zeros(size*n_my),dtype=np.csingle)
-        libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
-        ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
-        #print('==== size=',size)
-        libcg.cg(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, n_my, CGMaxIT, 1)
+            b_vals[p*size:(p+1)*size] = z[p][:].ravel()
+            # print(p,' -- z=',z[p][:].ravel())
+        # print('bvals=',b_vals)
+        b_values = np.array(b_vals, dtype=np.csingle)
+        a_values = np.array(P[0].data, dtype=np.csingle)
+        row_ptr = np.array(P[0].indptr, dtype=np.intc)
+        col_idx = np.array(P[0].indices, dtype=np.intc)
+        x = np.ascontiguousarray(np.zeros(size*n_my), dtype=np.csingle)
+        # libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
+        # ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
+        # print('==== size=',size)
+        # libcg.cg(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, n_my, CGMaxIT, 1)
         for p in range(n_my):
-            r[p]=x[p*size:(p+1)*size].astype(complex)
+            r[p] = x[p*size:(p+1)*size].astype(complex)
             r[p] = r[p].reshape(GLOBALS[p].shape)
-            #print('r-shape', p , r[p].shape)
-        #exit(0)
-    else: 
+            # print('r-shape', p , r[p].shape)
+        # exit(0)
+    else:
         for p in range(n_my):
-            if UseCG==1:
+        # for p in range(1):
+            if UseCG == 1:
                 size = P[0].shape[0]
                 # size = 2
                 a_values=np.array(P[0].data,dtype=np.csingle)
-                # a_values=np.array(A.data,dtype=np.csingle)
+                # a_values = np.array(A.data, dtype=np.csingle)
                 row_ptr=np.array(P[0].indptr,dtype=np.intc)
-                # row_ptr=np.array(A.indptr,dtype=np.intc)
+                # row_ptr = np.array(A.indptr, dtype=np.intc)
                 col_idx=np.array(P[0].indices,dtype=np.intc)
-                # col_idx=np.array(A.indices,dtype=np.intc)
+                # col_idx = np.array(A.indices, dtype=np.intc)
                 x=np.ascontiguousarray(np.zeros(size),dtype=np.csingle)
-                # x=np.ascontiguousarray(np.ones(size),dtype=np.csingle)
+                # x = np.ascontiguousarray(np.zeros(size), dtype=np.csingle)
                 b_values=np.array(z[p].ravel(),dtype=np.csingle)
-                # b_values=np.array([3-4j,-1+0.5j],dtype=np.csingle)
-                libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
-                ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
- 
-                libcg.cg(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, 1, CGMaxIT, 1)
-                r[p] = x.astype(complex)
+                # b_values = np.array([3-4j, -1+0.5j], dtype=np.csingle)
+                # libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
+                # ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
+
+                # libcg.cg(size, A.nnz, a_values, b_values, row_ptr, col_idx, x, 1, 100, 1)
+                # print(x)
+                # r[p] = x.astype(complex)
+                # print(r[p])
+                # P_CG(size, A.nnz, a_values, b_values,
+                #      row_ptr, col_idx, x, 1, CGMaxIT)
+
+                r[p]=P_CG(size, P[0].nnz, a_values, b_values,
+                     row_ptr, col_idx, x, 1, 100)
+                r[p] = x.astype(complex)     
+                # print(r[p])
             else:
                 r[p] = scipy.sparse.linalg.spsolve(P[p], z[p].ravel())
             r[p] = r[p].reshape(GLOBALS[p].shape)
     r = OL_update(r)
     return r
-
 
 def check_nd_print_global_vec(v, txt):  # comm not done yet...
     global N, M_coarse, R, RT, A, A_c, n, m, scale_int, Explicit_Acoarse, k, epsilon
