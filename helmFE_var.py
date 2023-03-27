@@ -504,50 +504,43 @@ def SymmGaussSeidel(Acoo,b):
         print(t,':',max(abs(Acoo.dot(x)-b)))
     return x
 
-def CG(A,b,x=None,tol=1e-5,maxit=1000,verbose=False):
-    """
-    A - square matrix, should be positive semi-definite with A.dot() operation defined
-    b - numpy vector with conformable size to A
-    x - initial guess on input (optional)
-    tol - residual tolerance in L2-norm 
-    """
+def CG(A, b, x=None, tol=1e-5, maxit=1000, verbose=False):
     if x is None:
-        x=zeros(b.size,dtype=complex)
-    ax=A.dot(x)
+        x = zeros(b.size, dtype=complex)
+    ax = A.dot(x)
 
     r = b-ax
-    for i in range(maxit):
-        #z = Preconditioner_I(r) 
-        deltaNew = dot(r, r)
-        ##OK##print('deltaNew=',deltaNew)
-        #print('deltaNew=',deltaNew)
-        #pdb.set_trace()
-        if i==0:
-            d = r
-        else:
-            beta = deltaNew/deltaOld
-            d = r + beta * d
-        q = A.dot(d)
-        ###print('q=',q)
-        alpha = deltaNew / dot(d, q)
-        ###print(i,' alpha=',alpha)
-        x = x + alpha * d
-        r = r - alpha * q
-        # res2norm = sqrt(abs(dot(r, r)))
-        # if verbose:
-        #     print(i,res2norm) # ,dot(r,r),abs(dot(r,r))
-        # if res2norm < tol:
-        #     break
-        deltaOld = deltaNew
-        # if i==1:
-            # print(f'CG2 deltaNew = {deltaNew}')
-            # print(f'CG2 deltaOld = {deltaOld}')
-            # print(f'CG2 q = {q}')
-            # print(f'CG2 alpha = {alpha}')
-            # print(f'CG2 beta = {beta}')
-            # print(f'CG2 x = {x}')
-            # print(f'CG2 r = {r}')
 
+    d = r
+
+    deltaNew = dot(r, r)
+    # print(f'Delta new: {deltaNew}')
+
+    for i in range(maxit):
+        q = A.dot(d)
+
+        dq = dot(d, q)
+
+        alpha = deltaNew/dq
+        # print(f'Alpha : {alpha}')
+
+        x = x + alpha * d
+        # print(f'X: {x}')
+
+        r = r - alpha * q
+        # print(f'R: {r}')
+
+        deltaOld = deltaNew
+
+        deltaNew = dot(r, r)
+        # print(f'Delta new {i} : {deltaNew}')
+        # print(f'Delta old{i} : {deltaOld}')
+
+        beta = deltaNew/deltaOld
+        # print(f'Beta: {beta}')
+
+        d = r + beta * d
+        # print(f'D: {d}')
     return x
 
 def CG2(A,b,x=None,tol=1e-5,maxit=1000,verbose=False):
