@@ -17,7 +17,7 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
     spmv_work_groups = 1 + ((size - 1) // rows_per_wg)
     spmv_global_size = spmv_work_groups * LOCAL_SIZE
     spmv_local_size = LOCAL_SIZE
-    np_type = np.dtype(np.complex64 if IS_COMPLEX else np.float32)
+    np_type = np.dtype(np.csingle if IS_COMPLEX else np.intc)
     val_size = np_type.itemsize
     include_file = "-I ./kernel/complex " if IS_COMPLEX else ""
     options = [
@@ -40,7 +40,7 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
 
     # Allocate device memory and copy host arrays to device
     mf = cl.mem_flags
-    int_size = np.dtype(np.int32).itemsize
+    int_size = np.dtype(np.intc).itemsize
     a_values_buf = cl.Buffer(
         ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, size=non_zeros * val_size, hostbuf=a_values)
     a_cols_buf = cl.Buffer(
@@ -48,9 +48,11 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
     a_pointers_buf = cl.Buffer(
         ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, size=(size + 1) * int_size, hostbuf=a_pointers)
     b_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
-                      size=n_rhs * size * val_size, hostbuf=b_values)
+                    #   size=n_rhs * size * val_size,
+                       hostbuf=b_values)
     x_buf = cl.Buffer(ctx, mf.READ_WRITE | mf.COPY_HOST_PTR,
-                      size=n_rhs * size * val_size, hostbuf=x)
+                    #   size=n_rhs * size * val_size,
+                       hostbuf=x)
     r_buf = cl.Buffer(ctx, mf.READ_WRITE, size=n_rhs * size * val_size)
     d_buf = cl.Buffer(ctx, mf.READ_WRITE, size=n_rhs * size * val_size)
     q_buf = cl.Buffer(ctx, mf.READ_WRITE, size=n_rhs * size * val_size)
@@ -60,12 +62,12 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
     # beta_buf = cl.Buffer(ctx, mf.READ_WRITE, size=n_rhs * val_size)
 
     # y = A * x                   (spmv)
-    spmv_kernel(queue, (spmv_global_size,), (spmv_local_size,), np.int32(size), a_values_buf,
-                a_pointers_buf, a_cols_buf, x_buf, q_buf, cl.LocalMemory(n_rhs * spmv_local_size * val_size)).wait()
+    spmv_kernel(queue, (spmv_global_size,), (spmv_local_size,), np.intc(size), a_values_buf,
+                a_pointers_buf, a_cols_buf, x_buf, q_buf, cl.LocalMemory(n_rhs * spmv_local_size * val_size*2)).wait()
 
     # r = b - y                   (sub)
     sub_kernel(queue, (global_size,), (local_size,),
-               b_buf, q_buf, r_buf, np.int32(size)).wait()
+               b_buf, q_buf, r_buf, np.intc(size)).wait()
     b_buf.release()
 
     # d = r                       (copy)
@@ -73,67 +75,83 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
 
     # deltaNew = r^T * r               (dot)
     dot_kernel(queue, (global_size,), (local_size,), r_buf, r_buf, cl.LocalMemory(
-        n_rhs * local_size * val_size), dot_res_buf, np.int32(size)).wait()
+        n_rhs * local_size * val_size), dot_res_buf, np.intc(size)).wait()
     
-    h_dot_res = np.zeros(n_rhs * work_groups, dtype=np_type)
+    h_dot_res = np.zeros(n_rhs * work_groups * val_size, dtype=np_type)
+    delta_new = np.zeros(n_rhs * work_groups, dtype=np_type)
+    alpha = np.zeros(n_rhs * work_groups, dtype=np_type)
     cl.enqueue_copy(queue, h_dot_res, dot_res_buf).wait()
-    delta_new = np.nan_to_num(h_dot_res, nan=0, posinf=0, neginf=0)[0]
-    print(f'Delta: {delta_new}')
-    for iteration in range(1):
+
+    # Reduction
+    for r in range(n_rhs):
+        for i in range(work_groups):
+            delta_new[r] += h_dot_res[r * work_groups + i]
+        
+    delta_new = np.nan_to_num(delta_new, nan=0, posinf=0, neginf=0)[0]
+    delta_old = delta_new
+    # print(f'Delta new: {delta_new}')
+
+    for iteration in range(n_iterations):
         # q = A * d (spmv)
 
-        spmv_kernel(queue, (spmv_global_size,), (spmv_local_size,), np.int32(size), a_values_buf,
+        spmv_kernel(queue, (spmv_global_size,), (spmv_local_size,), np.intc(size), a_values_buf,
                     a_pointers_buf, a_cols_buf, d_buf, q_buf, cl.LocalMemory(n_rhs * spmv_local_size * val_size)).wait()
 
         # dq = d * q(dot)
         dot_kernel(queue, (global_size,), (local_size,), d_buf, q_buf, cl.LocalMemory(
-            n_rhs * local_size * val_size), dot_res_buf, np.int32(size)).wait()
+            n_rhs * local_size * val_size), dot_res_buf, np.intc(size)).wait()
         cl.enqueue_copy(queue, h_dot_res, dot_res_buf).wait()
-        print(f'DQ: {h_dot_res[0]}')
+        h_dq = np.zeros(n_rhs * work_groups, dtype=np_type)
+        for r in range(n_rhs):
+            # Reduction
+            for i in range(work_groups):
+                h_dq[r] += h_dot_res[r * work_groups + i]
+        h_dq = np.nan_to_num(h_dq, nan=0, posinf=0, neginf=0)[0]
+        alpha = delta_new/h_dq
 
-        alpha = delta_new/h_dot_res[0]
-        print(f'Alpha: {alpha}')
-
-        # x = alpha * d + x(axpy)
-        # alpha_buf = cl.Buffer(
-        #     ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, n_rhs * val_size, hostbuf=np.complex64(alpha))
-        cl.enqueue_copy(queue, const_buf, np.complex64(
+        # print(f'Alpha: {alpha}')
+        
+        cl.enqueue_copy(queue, const_buf, np.csingle(
             alpha), is_blocking=True).wait()
 
         # x = alpha * d + x(axpy)
         axpy_kernel(queue, (global_size,), (local_size,), d_buf,
-                    x_buf, const_buf, np.int32(1), np.int32(size))
-        cl.enqueue_copy(queue, x, x_buf).wait()
-        print(f'X: {x}')
+                    x_buf, const_buf, np.intc(1), np.intc(size))
+        # print(f'X: {x}')
 
         # r = - alpha * q + r(axpy)
         axpy_kernel(queue, (global_size,), (local_size,), q_buf,
-                    r_buf, const_buf, np.int32(0), np.int32(size)).wait()
-        cl.enqueue_copy(queue, x, r_buf).wait()
-        print(f'R: {x}')
+                    r_buf, const_buf, np.intc(0), np.intc(size)).wait()
+        delta_old = delta_new
+        # print(f'R: {x}')
 
         # deltaNew = r ^ T * r(dot)
-        delta_old = delta_new
         dot_kernel(queue, (global_size,), (local_size,), r_buf, r_buf, cl.LocalMemory(
-            n_rhs * local_size * val_size), dot_res_buf, np.int32(size)).wait()
+            n_rhs * local_size * val_size), dot_res_buf, np.intc(size)).wait()
         cl.enqueue_copy(queue, h_dot_res, dot_res_buf).wait()
-        delta_new = h_dot_res[0]
-        print(f'Delta {iteration}: {delta_new}')
+
+        # Reduction
+        delta_new = np.zeros(n_rhs * work_groups, dtype=np_type)
+        for r in range(n_rhs):
+            for i in range(work_groups):
+                delta_new[r] += h_dot_res[r * work_groups + i]
+        delta_new = np.nan_to_num(delta_new, nan=0, posinf=0, neginf=0)[0]
+
+        # print(f'Delta new {iteration}: {delta_new}')
+        # print(f'Delta old {iteration}: {delta_old}')
+
         beta = delta_new/delta_old
-        print(f'Beta: {beta}')
+
+        # print(f'Beta: {beta}')
 
         # d = beta * d + r(aypx)
-        # beta_buf = cl.Buffer(
-        #     ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, n_rhs * val_size, hostbuf=np.complex64(beta))
-        cl.enqueue_copy(queue, const_buf, np.complex64(
+        cl.enqueue_copy(queue, const_buf, np.csingle(
             beta), is_blocking=True).wait()
         aypx_kernel(queue, (global_size,), (local_size,), r_buf,
-                    d_buf, const_buf, np.int32(size)).wait()
-        cl.enqueue_copy(queue, x, d_buf).wait()
-        print(f'D: {x}')
+                    d_buf, const_buf, np.intc(size)).wait()
+        # print(f'D: {x}')
         
     cl.enqueue_copy(queue, x, x_buf).wait()
-    print(f'X: {x}')
     a_values_buf.release()
     a_cols_buf.release()
     a_pointers_buf.release()
@@ -145,3 +163,4 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
     const_buf.release()
     queue.flush()
     queue.finish()
+    return x
