@@ -23,10 +23,12 @@ from numpy import array, random, zeros, ones, arange, dot, vdot, sqrt, real, exp
 from scipy.sparse.linalg import aslinearoperator
 
 from helmFE_var import CG
-from cl import CG as P_CG
+import cl as pcl
+# from cl import CG as P_CG
 
 libcg = CDLL("./liboclcg.so")
 libcg.connect()
+pcl.create_kernels(1)
 
 def helm_fe(N, k, eps):
     global DomainProc, SubDomain, nprocs, comm, rank, globtag, maxtag
@@ -1834,7 +1836,9 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
         # libcg.cg.argtypes=[c_int, c_int, ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), ndpointer(dtype=np.intc,ndim=1,flags='C'),
         # ndpointer(dtype=np.intc,ndim=1,flags='C'), ndpointer(dtype=np.csingle,ndim=1,flags='C'), c_int, c_int, c_int]
         # print('==== size=',size)
-        # libcg.cg(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, n_my, CGMaxIT, 1)
+        pcl.CG(size, P[0].nnz, a_values, b_values,
+                     row_ptr, col_idx, x, n_my, CGMaxIT)
+        # print(x)
         for p in range(n_my):
             r[p] = x[p*size:(p+1)*size].astype(complex)
             r[p] = r[p].reshape(GLOBALS[p].shape)
@@ -1866,8 +1870,8 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
                 # P_CG(size, A.nnz, a_values, b_values,
                 #      row_ptr, col_idx, x, 1, CGMaxIT)
 
-                r[p]=P_CG(size, P[0].nnz, a_values, b_values,
-                     row_ptr, col_idx, x, 1, 100)
+                pcl.CG(size, P[0].nnz, a_values, b_values,
+                     row_ptr, col_idx, x, 1, CGMaxIT)
                 r[p] = x.astype(complex)     
                 # print(r[p])
             else:
