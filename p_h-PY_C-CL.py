@@ -30,13 +30,20 @@ from mpi4py import MPI
 from numpy import array, random, zeros, ones, arange, dot, vdot, sqrt, real, exp, conjugate, concatenate, empty, ravel, \
     meshgrid
 from scipy.sparse.linalg import aslinearoperator
-import matplotlib.pyplot as plt
-import pandas as pd
+import pyopencl as cl
+
 from helmFE_var import CG
 import cl as pcl
 
 libcg = CDLL("./build/liboclcg.so")
 libcg.connect()
+
+def get_gpu_devices():
+    platforms = cl.get_platforms()
+    devices = []
+    for platform in platforms:
+        devices += platform.get_devices(device_type=cl.device_type.GPU)
+    return devices
 
 def helm_fe(N, k, eps):
     global DomainProc, SubDomain, nprocs, comm, rank, globtag, maxtag
@@ -1819,6 +1826,7 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
                         if rank == 0: print('--- Using A_eps for solves')
                     P[p] = A_eps[p][2]
     r = list(range(n_my))
+    devices = get_gpu_devices()
     time__=time()
     if 'time_per_it' not in globals():
         time_per_it=0.0
@@ -1832,28 +1840,29 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
                 if rank==0: print('  subsolve time:',p,time()-t)
     elif UseCG == 2:
         size = P[0].shape[0]
-        x = np.ascontiguousarray(np.zeros(size*n_my), dtype=np.csingle)
-        b_values = np.zeros(size*n_my, dtype=np.csingle)
-        for p in range(n_my):
-            b_values[p*size:(p+1)*size] = z[p][:].ravel()
         a_values = np.array(P[0].data, dtype=np.csingle)
         row_ptr = np.array(P[0].indptr, dtype=np.intc)
         col_idx = np.array(P[0].indices, dtype=np.intc)
+        distribution = distribute_subdomains(devices, n_my)
+        for d in distribution:
+            # started__=time()
+            r_rhs = distribution[d]
+            num_elements = size * (r_rhs[1] - r_rhs[0])
+            b_values = np.array(z[r_rhs[0]:r_rhs[1]]).ravel().astype(np.csingle)
+            x = np.zeros(num_elements, dtype=np.csingle)
+            # print(f'First step{time()-started__ }')
+            pcl.CG(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, r_rhs[1] - r_rhs[0], CGMaxIT, d)
+            for p, r_elem in enumerate(x.reshape(-1, size), start=r_rhs[0]):
+                # started__=time()
+                r[p] = r_elem.astype(complex).reshape(GLOBALS[p].shape)
+                # print(f'Second step{time()-started__ }')
         
-        x = pcl.CG(size, P[0].nnz, a_values, b_values,
-                     row_ptr, col_idx, x, n_my, CGMaxIT)
-        
-        for p in range(n_my):
-            r[p] = x[p*size:(p+1)*size].astype(complex)
-            r[p] = r[p].reshape(GLOBALS[p].shape)
     elif UseCG == 12:
         size = P[0].shape[0]
         x = np.ascontiguousarray(np.zeros(size*n_my), dtype=np.csingle)
         b_vals = zeros(size*n_my, dtype=z[0].dtype)
         for p in range(n_my):
             b_vals[p*size:(p+1)*size] = z[p][:].ravel()
-            # print(p,' -- z=',z[p][:].ravel())
-        # print('bvals=',b_vals)
         b_values = np.array(b_vals, dtype=np.csingle)
         a_values = np.array(P[0].data, dtype=np.csingle)
         row_ptr = np.array(P[0].indptr, dtype=np.intc)
@@ -1875,9 +1884,8 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
                 col_idx=np.array(P[0].indices,dtype=np.intc)
                 x=np.ascontiguousarray(np.zeros(size),dtype=np.csingle)
                 b_values=np.array(z[p].ravel(),dtype=np.csingle)
-                
                 x = pcl.CG(size, P[p].nnz, a_values, b_values,
-                     row_ptr, col_idx, x, 1, CGMaxIT)
+                     row_ptr, col_idx, x, 1, CGMaxIT, devices[0])
                 r[p] = x.astype(complex)     
                 if it<=1:
                     if rank==0: print('  subsolve time:',p,time()-t)
@@ -2022,6 +2030,23 @@ def norm(zz, Dk=None):
     nrm2 = comm.allreduce(nrm)
     return sqrt(nrm2)
 
+
+def distribute_subdomains(devices, n_subdomain):
+    n_gpus = len(devices)
+    tasks_per_process = n_subdomain // n_gpus
+    extra_tasks = n_subdomain % n_gpus
+
+    distribution = {}
+    start = 0
+    for i in range(n_gpus):
+        tasks = tasks_per_process
+        if extra_tasks > 0:
+            tasks += 1
+            extra_tasks -= 1
+        end = start + tasks
+        distribution[devices[i]] = (start,end)
+        start = end
+    return distribution
 
 def OL_update(x, Force_Averaging=False, DEBA=False):
     global N
@@ -3490,21 +3515,21 @@ else:
     if  len(sys.argv) == 5:
         CGMaxIT = int(sys.argv[4])
 
-if UseCG==0:
-    print('=== Using EXACT SubSolves!')
-elif UseCG==1:
-    print('=== Using',CGMaxIT,'iterations of GPGPU PyCL-CG with Single RHS SubSolves!')
-elif UseCG==2:
-    print('=== Using',CGMaxIT,'iterations of GPGPU PyCL-CG with Multiple RHS SubSolves!')
-elif UseCG==11:
-    print('=== Using',CGMaxIT,'iterations of GPGPU C_CL-CG with Single RHS SubSolves!')
-elif UseCG==12:
-    print('=== Using',CGMaxIT,'iterations of GPGPU C_CL-CG with Multiple RHS SubSolves!')
-elif UseCG==3:
-    print('=== Using',CGMaxIT,'iterations of NumPy-CG SubSolves!')
-else:
-    print('=== -- unknown SubSolver!')
-    exit(0)
+# if UseCG==0:
+#     print('=== Using EXACT SubSolves!')
+# elif UseCG==1:
+#     print('=== Using',CGMaxIT,'iterations of GPGPU PyCL-CG with Single RHS SubSolves!')
+# elif UseCG==2:
+#     print('=== Using',CGMaxIT,'iterations of GPGPU PyCL-CG with Multiple RHS SubSolves!')
+# elif UseCG==11:
+#     print('=== Using',CGMaxIT,'iterations of GPGPU C_CL-CG with Single RHS SubSolves!')
+# elif UseCG==12:
+#     print('=== Using',CGMaxIT,'iterations of GPGPU C_CL-CG with Multiple RHS SubSolves!')
+# elif UseCG==3:
+#     print('=== Using',CGMaxIT,'iterations of NumPy-CG SubSolves!')
+# else:
+#     print('=== -- unknown SubSolver!')
+#     exit(0)
 
 
 AS_prec = 1
@@ -3530,12 +3555,33 @@ epsilon = kkk ** (beta)
 ep1 = epsilon
 ep2 = epsilon
 if rank == 0: print('----> setting epsilon=k^beta: ', epsilon)
-cgs = [0,1,2,3,11,12]
+# t1 = time()
+# its = HSolver(k_in=kkk, W_subd_in=W_s, M_subd_in=M_s, ep1_in=ep1, OL_in=ol, AS_prec=AS_prec)
+# t2=time()
+# if rank == 0: print('Total time:',t2-t1, '(',(t2-t1)/60,'minutes )')
+# if rank == 0: print('Aver. time per iter:',time_per_it/(its-1))
+
+cgs = [0,1,2,3]
 times = []
 times_pi = []
 for cg in cgs:
     try:
         UseCG = cg
+        if UseCG==0:
+            print('=== Using EXACT SubSolves!')
+        elif UseCG==1:
+            print('=== Using',CGMaxIT,'iterations of GPGPU PyCL-CG with Single RHS SubSolves!')
+        elif UseCG==2:
+            print('=== Using',CGMaxIT,'iterations of GPGPU PyCL-CG with Multiple RHS SubSolves!')
+        elif UseCG==11:
+            print('=== Using',CGMaxIT,'iterations of GPGPU C_CL-CG with Single RHS SubSolves!')
+        elif UseCG==12:
+            print('=== Using',CGMaxIT,'iterations of GPGPU C_CL-CG with Multiple RHS SubSolves!')
+        elif UseCG==3:
+            print('=== Using',CGMaxIT,'iterations of NumPy-CG SubSolves!')
+        else:
+            print('=== -- unknown SubSolver!')
+            exit(0)
         t1 = time()
         its = HSolver(k_in=kkk, W_subd_in=W_s, M_subd_in=M_s, ep1_in=ep1, OL_in=ol, AS_prec=AS_prec)
         t2 = time()
@@ -3547,15 +3593,15 @@ for cg in cgs:
         times.append(0)
         times_pi.append(0)
 
-labels = ['Exact subsolves', 'PyOpenCL-CG single RHS subsolves ', 'PyOpenCL-CG multiple RHS', 'NumPy-CG subsolves', 'C-CG single RHS Subsolves', 'C-CG multiple RHS']
-plt.figure(figsize=(25.60, 14.40), dpi=100)
 
-# Plot the data
-plt.bar(labels, times_pi)
-plt.bar(labels, times, bottom=times_pi)
-plt.xlabel('CG implementations')
-plt.ylabel('Time taken to converge (s)')
-plt.title(f'Performance comparison of CG implementations for {M_s} subdomain width and {W_s*W_s} total number of subdomains and max iteration {CGMaxIT}')
-# plt.grid(True, color = "grey", linewidth = "1.4", linestyle = "--")
-# plt.show()
-plt.savefig(f'./graphs/cg_{M_s}_{W_s}.png')
+np.savetxt('output.txt', times, delimiter=',', fmt='%.2f', header=f'Performance comparison of CG implementations for {M_s} subdomain width and {W_s*W_s} total number of subdomains and max iteration {CGMaxIT}', footer='End of Array')
+
+# labels = ['Exact subsolves', 'PyOpenCL-CG single RHS subsolves ', 'PyOpenCL-CG multiple RHS', 'NumPy-CG subsolves', 'C-CG single RHS Subsolves', 'C-CG multiple RHS']
+# plt.figure(figsize=(25.60, 14.40), dpi=100)
+# # Plot the data
+# plt.bar(labels, times_pi)
+# plt.bar(labels, times, bottom=times_pi)
+# plt.xlabel('CG implementations')
+# plt.ylabel('Time taken to converge (s)')
+# plt.title(f'Performance comparison of CG implementations for {M_s} subdomain width and {W_s*W_s} total number of subdomains and max iteration {CGMaxIT}')
+# plt.savefig(f'./graphs/cg_{M_s}_{W_s}.png')
