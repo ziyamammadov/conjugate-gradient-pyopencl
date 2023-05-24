@@ -1,11 +1,11 @@
 import numpy as np
 import pyopencl as cl
 IS_COMPLEX = True
-LOCAL_SIZE = 256
 WAVE_SIZE = 32
+LOCAL_SIZE = 8*WAVE_SIZE
 
-def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iterations):
-    ctx = cl.create_some_context(interactive=False)
+def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iterations,device):
+    ctx = cl.Context(devices=[device])
     queue = cl.CommandQueue(ctx)
     folder_path = './kernel/complex/' if IS_COMPLEX == True else './kernel/real/'
     include_file = "-I ./kernel/complex " if IS_COMPLEX else ""
@@ -36,6 +36,11 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
     spmv_local_size = LOCAL_SIZE
     np_type = np.dtype(np.csingle if IS_COMPLEX else np.intc)
     val_size = np_type.itemsize
+    # print(f'Local size: {local_size}')
+    # print(f'Global size: {global_size}')
+    # print(f'Size of matrix: {size}')
+    # print(f'SPMV Local size: {spmv_local_size}')
+    # print(f'SPMV Global size: {spmv_global_size}')
     
     # Allocate device memory and copy host arrays to device
     mf = cl.mem_flags
