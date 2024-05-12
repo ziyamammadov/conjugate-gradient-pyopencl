@@ -1,32 +1,48 @@
+
 import numpy as np
 import pyopencl as cl
 IS_COMPLEX = True
 WAVE_SIZE = 32
 LOCAL_SIZE = 8*WAVE_SIZE
+FOLDER_PATH = './kernel/complex/' if IS_COMPLEX else './kernel/real/'
+INCLUDE_FILE = "-I ./kernel/complex " if IS_COMPLEX else ""
 
-def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iterations,device):
+def load_and_build_kernel(ctx, kernel_name, options):
+    with open(f'{FOLDER_PATH}{kernel_name}.cl', 'r') as f:
+        kernel = cl.Program(ctx, f.read()).build(options=options).__getattr__(kernel_name)
+    return kernel
+
+def initialize_cl_environment():
+    ctx = cl.create_some_context(interactive=False)
+    queue = cl.CommandQueue(ctx)
+    return ctx, queue
+
+def initialize_cl_environment_with_device(device):
     ctx = cl.Context(devices=[device])
     queue = cl.CommandQueue(ctx)
-    folder_path = './kernel/complex/' if IS_COMPLEX == True else './kernel/real/'
-    include_file = "-I ./kernel/complex " if IS_COMPLEX else ""
-    options = [
-        f"{include_file} -D N_RHS={n_rhs} -D WAVE_SIZE={WAVE_SIZE} -D WG_SIZE={LOCAL_SIZE}"]
+    return ctx, queue
 
-    with open(f'{folder_path}axpy.cl', 'r') as f:
-        axpy_kernel = cl.Program(ctx, f.read()).build(options=options).axpy
+def load_and_build_kernels(ctx, n_rhs):
+    options = [f"{INCLUDE_FILE} -D N_RHS={n_rhs} -D WAVE_SIZE={WAVE_SIZE} -D WG_SIZE={LOCAL_SIZE}"]
 
-    with open(f'{folder_path}aypx.cl', 'r') as f:
-        aypx_kernel = cl.Program(ctx, f.read()).build(options=options).aypx
+    return {
+        'axpy': load_and_build_kernel(ctx, 'axpy', options),
+        'aypx': load_and_build_kernel(ctx, 'aypx', options),
+        'spmv': load_and_build_kernel(ctx, 'spmv', options),
+        'sub': load_and_build_kernel(ctx, 'sub', options),
+        'vdot': load_and_build_kernel(ctx, 'vdot', options)
+    }
 
-    with open(f'{folder_path}spmv.cl', 'r') as f:
-        spmv_kernel = cl.Program(ctx, f.read()).build(options=options).spmv
+def CG(ctx, queue, kernels, size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iterations, device=None):
+    if n_rhs == 1:
+        kernels = load_and_build_kernels(ctx, 1)
 
-    with open(f'{folder_path}sub.cl', 'r') as f:
-        sub_kernel = cl.Program(ctx, f.read()).build(options=options).sub
+    axpy_kernel = kernels['axpy']
+    aypx_kernel = kernels['aypx']
+    spmv_kernel = kernels['spmv']
+    sub_kernel = kernels['sub']
+    dot_kernel = kernels['vdot']
 
-    with open(f'{folder_path}vdot.cl', 'r') as f:
-        dot_kernel = cl.Program(ctx, f.read()).build(options=options).vdot
-        
     work_groups = 1 + ((size - 1) // LOCAL_SIZE)
     global_size = size if work_groups == 1 else work_groups * LOCAL_SIZE
     local_size = global_size if work_groups == 1 else LOCAL_SIZE
@@ -36,12 +52,13 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
     spmv_local_size = LOCAL_SIZE
     np_type = np.dtype(np.csingle if IS_COMPLEX else np.intc)
     val_size = np_type.itemsize
+
     # print(f'Local size: {local_size}')
     # print(f'Global size: {global_size}')
     # print(f'Size of matrix: {size}')
     # print(f'SPMV Local size: {spmv_local_size}')
     # print(f'SPMV Global size: {spmv_global_size}')
-    
+
     # Allocate device memory and copy host arrays to device
     mf = cl.mem_flags
     int_size = np.dtype(np.intc).itemsize
@@ -63,7 +80,7 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
     dot_res_buf = cl.Buffer(
         ctx, mf.READ_WRITE, size=n_rhs * work_groups * val_size)
     const_buf = cl.Buffer(ctx, mf.READ_WRITE, size=n_rhs * val_size)
-    
+
     # CL local memories
     spmv_cl_loc_mem = cl.LocalMemory(n_rhs * spmv_local_size * val_size)
     dot_cl_loc_mem = cl.LocalMemory(n_rhs * local_size * val_size)
@@ -71,7 +88,6 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
     # y = A * x                   (spmv)
     wait_spmv = spmv_kernel(queue, (spmv_global_size,), (spmv_local_size,), np.intc(size), a_values_buf,
                             a_pointers_buf, a_cols_buf, x_buf, q_buf, spmv_cl_loc_mem)
-
     # r = b - y                   (sub)
     wait_sub = sub_kernel(queue, (global_size,), (local_size,),
                           b_buf, q_buf, r_buf, np.intc(size), wait_for=[wait_spmv])
@@ -94,7 +110,7 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
         for i in range(work_groups):
             delta_new[r] += h_dot_res[r * work_groups + i]
     delta_old = delta_new
-    
+
     # print(f'Delta new: {delta_new}')
 
     for iteration in range(n_iterations):
@@ -109,7 +125,7 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
         # dq = d * q(dot)
         wait_dot = dot_kernel(queue, (global_size,), (local_size,), d_buf, q_buf, dot_cl_loc_mem,
                               dot_res_buf, np.intc(size), wait_for=[wait_spmv])
-            
+
         h_dot_res = np.zeros(n_rhs * work_groups, dtype=np_type)
         cl.enqueue_copy(queue, h_dot_res, dot_res_buf,
                         wait_for=[wait_dot])
@@ -151,7 +167,7 @@ def CG(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iter
         # print(f'Delta old {iteration}: {delta_old}')
 
         beta = delta_new/delta_old
-        
+
         # print(f'Beta: {beta}')
 
         # d = beta * d + r(aypx)
