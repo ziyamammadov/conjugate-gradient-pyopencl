@@ -10,7 +10,6 @@ Add 4 arguments: number_of_subdomains subdomain_width UseCG [CGMaxIT]
          3 - GPGPU C_CL-CG with Single RHS SubSolves
          4 - C_CL-CG with Multiple RHS SubSolves
          5 - NumPy-CG SubSolves
-         6 - GPGPU PyCL-CG with Multiple RHS SubSolves on Multiple GPUs
   CGMaxIT: -- # of CG iterations to perform in each subdomain solve [default 256]
 
 Example of usage:
@@ -1842,7 +1841,7 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
     global DomainProc, SubDomain, nprocs, comm, rank, globtag, maxtag, time_per_it, time__
     global VarCoeff, Morig, Marmousi, Marmousi_c, UseCG, CGtol, CGMaxIT
     global it
-    global devices, ctx, queue, kernels
+    global devices, ctx, queue, kernels, workloads
 
 
     n_my = SubDomain.shape[0]
@@ -1942,7 +1941,7 @@ def as_prec(z):  # 1-level Additive Schwarz Preconditioner
         row_ptr = np.array(P[0].indptr, dtype=np.intc)
         col_idx = np.array(P[0].indices, dtype=np.intc)
         
-        distribute_computations_with_threads(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, n_my, CGMaxIT, devices)
+        distribute_computations_with_threads(size, P[0].nnz, a_values, b_values, row_ptr, col_idx, x, n_my, CGMaxIT, workloads)
                 
         for p in range(n_my):
             r[p] = x[p*size:(p+1)*size].astype(complex)
@@ -2134,34 +2133,39 @@ def distribute_workloads_on_devices(devices, n_subdomain):
             tasks += 1
             extra_tasks -= 1
         end = start + tasks
-        distribution[devices[i]] = (start,end)
+        ctx, queue = pcl.initialize_cl_environment_with_device(devices[i])
+        kernels = pcl.load_and_build_kernels(ctx, end-start)
+        distribution[devices[i]] = (start,end,ctx,queue,kernels)
         start = end
     return distribution
 
-def distribute_computations_with_threads( size, non_zeros, a_values, b_values, a_pointers, a_cols, x_values, n_rhs, n_iterations, devices
+def distribute_computations_with_threads( size, non_zeros, a_values, b_values, a_pointers, a_cols, x_values, n_rhs, n_iterations, workloads
 ):
-    global workloads
     threads = []
-    workloads = distribute_workloads_on_devices(devices, n_rhs)
     
     # Lock for thread-safe updates
     lock = threading.Lock()
 
     def worker(dev):
         nonlocal x_values
-        r_rhs = workloads[dev]
-        b = b_values[r_rhs[0] * size: r_rhs[1] * size]
-        x = x_values[r_rhs[0] * size: r_rhs[1] * size]
+        workload = workloads[dev]
+        start_subdomain_index = workload[0]
+        end_subdomain_index = workload[1]
+        ctx = workload[2]
+        queue = workload[3]
+        kernels = workload[4]
+        b = b_values[start_subdomain_index * size: end_subdomain_index * size]
+        x = x_values[start_subdomain_index * size: end_subdomain_index * size]
         
         # Perform computation (replace with actual implementation)
-        result_x = pcl.conjugate_gradient_multi_gpu(
+        result_x = pcl.conjugate_gradient_multi_gpu(ctx, queue, kernels,
             size, non_zeros, a_values, b, a_pointers, a_cols, x, 
-            r_rhs[1] - r_rhs[0], n_iterations, dev
+            end_subdomain_index - start_subdomain_index, n_iterations, dev
         )
         
         # Safely update shared x_values
         with lock:
-            x_values[r_rhs[0] * size: r_rhs[1] * size] = result_x
+            x_values[start_subdomain_index * size: end_subdomain_index * size] = result_x
 
     # Create and start threads
     for dev in workloads:
@@ -3657,6 +3661,7 @@ ol = int((W_s - 2) / 2)
 # ol = 2
 devices = pcl.get_gpu_devices()
 ctx, queue = pcl.initialize_cl_environment()
+workloads = distribute_workloads_on_devices(devices, M_s*M_s)
 kernels = pcl.load_and_build_kernels(ctx, M_s*M_s)
 
 # ctx, queue = pcl.initialize_cl_environment_with_device(devices[0])
