@@ -200,10 +200,7 @@ def CG(ctx, queue, kernels, size, non_zeros, a_values, b_values, a_pointers, a_c
     return x
 
 
-def conjugate_gradient_multi_gpu(size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iterations, device):
-    ctx, queue = initialize_cl_environment_with_device(device)
-    
-    kernels = load_and_build_kernels(ctx, n_rhs)
+def conjugate_gradient_multi_gpu(ctx, queue, kernels, size, non_zeros, a_values, b_values, a_pointers, a_cols, x, n_rhs, n_iterations, device):
         
     axpy_kernel = kernels['axpy']
     aypx_kernel = kernels['aypx']
