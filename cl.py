@@ -97,7 +97,7 @@ def conjugate_gradient_multi_gpu(ctx, queue, kernels, size, non_zeros, a_values,
 
     for iteration in range(n_iterations):
         # check tolerance
-        if check_tolerance:
+        if check_tolerance and iteration % 10 == 0:
             wait_tol = tol_kernel(queue, (n_rhs,), None, dot_res_buf, tolerance_buf, converged_buf, np_rhs, np.int32(work_groups))
 
             cl.enqueue_copy(queue, converged, converged_buf, wait_for=[wait_tol], is_blocking=False)
